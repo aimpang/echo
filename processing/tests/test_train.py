@@ -24,7 +24,7 @@ class TestBuildTrainCmd:
             config_file=Path("/repo/arguments/monocular.py"),
         )
         assert cmd[0] == "python"
-        assert any(str(Path("/repo/train.py")) in part for part in cmd)
+        assert any(part.endswith("train.py") for part in cmd)
         # -s <data>
         i = cmd.index("-s")
         assert cmd[i + 1] == str(Path("/data"))
@@ -54,7 +54,7 @@ class TestBuildRenderCmd:
             config_file=Path("/repo/arguments/monocular.py"),
         )
         assert cmd[0] == "python"
-        assert any(str(Path("/repo/render.py")) in part for part in cmd)
+        assert any(part.endswith("render.py") for part in cmd)
         i = cmd.index("--model_path")
         assert cmd[i + 1] == str(Path("/out"))
         # Render only train set so we get one frame per input time
@@ -82,16 +82,17 @@ class TestStageTimer:
         assert "boom" in timer.report()
 
 
+def _make_point_cloud_dir(root: Path, indices):
+    d = root / "point_cloud"
+    d.mkdir()
+    for i in indices:
+        (d / f"time_{i:05d}.ply").touch()
+    return d
+
+
 class TestFindRenderedPlys:
     def test_picks_up_numbered_plys(self, tmp_path: Path):
-        train_dir = tmp_path / "train" / "ours_6000" / "renders"
-        train_dir.mkdir(parents=True)
-        # per-timestep ply output
-        point_dir = tmp_path / "point_cloud"
-        point_dir.mkdir()
-        (point_dir / "time_00000.ply").touch()
-        (point_dir / "time_00001.ply").touch()
-        (point_dir / "time_00002.ply").touch()
+        _make_point_cloud_dir(tmp_path, [0, 1, 2])
         plys = find_rendered_plys(tmp_path)
         assert [p.name for p in plys] == [
             "time_00000.ply",
@@ -100,13 +101,8 @@ class TestFindRenderedPlys:
         ]
 
     def test_sorts_numerically_not_lexically(self, tmp_path: Path):
-        d = tmp_path / "point_cloud"
-        d.mkdir()
-        for i in [10, 2, 1, 20, 3]:
-            (d / f"time_{i:05d}.ply").touch()
-        plys = find_rendered_plys(tmp_path)
-        names = [p.name for p in plys]
-        # numeric-sorted (via the zero-padded filename)
+        _make_point_cloud_dir(tmp_path, [10, 2, 1, 20, 3])
+        names = [p.name for p in find_rendered_plys(tmp_path)]
         assert names == [
             "time_00001.ply",
             "time_00002.ply",

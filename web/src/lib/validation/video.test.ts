@@ -5,6 +5,7 @@ import {
   VIDEO_MAX_SECONDS,
   VIDEO_MAX_BYTES,
   ACCEPTED_VIDEO_MIME_TYPES,
+  type VideoValidationResult,
 } from "./video";
 
 const ok = {
@@ -12,6 +13,15 @@ const ok = {
   sizeBytes: 25_000_000,
   durationSeconds: 30,
 };
+
+function expectRejection(
+  result: VideoValidationResult,
+  code: Extract<VideoValidationResult, { ok: false }>["code"],
+) {
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.code).toBe(code);
+  return result as Extract<VideoValidationResult, { ok: false }>;
+}
 
 describe("validateVideoFile", () => {
   it("accepts a valid mp4 within bounds", () => {
@@ -34,27 +44,19 @@ describe("validateVideoFile", () => {
   });
 
   it("rejects durations shorter than the minimum", () => {
-    const result = validateVideoFile({
-      ...ok,
-      durationSeconds: VIDEO_MIN_SECONDS - 0.1,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe("too_short");
-      expect(result.message).toContain(`${VIDEO_MIN_SECONDS}`);
-    }
+    const rejection = expectRejection(
+      validateVideoFile({ ...ok, durationSeconds: VIDEO_MIN_SECONDS - 0.1 }),
+      "too_short",
+    );
+    expect(rejection.message).toContain(`${VIDEO_MIN_SECONDS}`);
   });
 
   it("rejects durations longer than the maximum", () => {
-    const result = validateVideoFile({
-      ...ok,
-      durationSeconds: VIDEO_MAX_SECONDS + 0.1,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.code).toBe("too_long");
-      expect(result.message).toContain(`${VIDEO_MAX_SECONDS}`);
-    }
+    const rejection = expectRejection(
+      validateVideoFile({ ...ok, durationSeconds: VIDEO_MAX_SECONDS + 0.1 }),
+      "too_long",
+    );
+    expect(rejection.message).toContain(`${VIDEO_MAX_SECONDS}`);
   });
 
   it("accepts durations exactly at the boundaries", () => {
@@ -67,23 +69,23 @@ describe("validateVideoFile", () => {
   });
 
   it("rejects files exceeding the size cap", () => {
-    const result = validateVideoFile({
-      ...ok,
-      sizeBytes: VIDEO_MAX_BYTES + 1,
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("too_large");
+    expectRejection(
+      validateVideoFile({ ...ok, sizeBytes: VIDEO_MAX_BYTES + 1 }),
+      "too_large",
+    );
   });
 
   it("rejects zero-byte files", () => {
-    const result = validateVideoFile({ ...ok, sizeBytes: 0 });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("empty");
+    expectRejection(
+      validateVideoFile({ ...ok, sizeBytes: 0 }),
+      "empty",
+    );
   });
 
   it("rejects non-finite durations", () => {
-    const result = validateVideoFile({ ...ok, durationSeconds: NaN });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe("invalid_duration");
+    expectRejection(
+      validateVideoFile({ ...ok, durationSeconds: NaN }),
+      "invalid_duration",
+    );
   });
 });

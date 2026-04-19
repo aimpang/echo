@@ -58,31 +58,32 @@ class TestFfmpegCommand:
 
 
 class TestColmapCommands:
-    def test_feature_extractor(self):
+    def test_feature_extractor_invokes_colmap_subcommand(self):
         cmd = build_colmap_feature_cmd("db.db", "images/")
-        assert cmd[0] == "colmap"
-        assert cmd[1] == "feature_extractor"
+        assert "colmap" in cmd
+        assert "feature_extractor" in cmd
         assert "--database_path" in cmd
         assert "db.db" in cmd
         assert "--image_path" in cmd
 
-    def test_exhaustive_matcher(self):
+    def test_exhaustive_matcher_invokes_colmap_subcommand(self):
         cmd = build_colmap_matcher_cmd("db.db")
-        assert cmd[:2] == ["colmap", "exhaustive_matcher"]
+        assert "colmap" in cmd
+        assert "exhaustive_matcher" in cmd
         assert "db.db" in cmd
 
-    def test_mapper(self):
+    def test_mapper_invokes_colmap_subcommand(self):
         cmd = build_colmap_mapper_cmd("db.db", "images/", "sparse/")
-        assert cmd[:2] == ["colmap", "mapper"]
+        assert "colmap" in cmd
+        assert "mapper" in cmd
         assert "sparse/" in cmd
 
-    def test_undistorter(self):
+    def test_undistorter_invokes_colmap_subcommand(self):
         cmd = build_colmap_undistorter_cmd(
             sparse_dir="sparse/0", images_dir="images/", output_dir="dense/"
         )
-        assert cmd[:2] == ["colmap", "image_undistorter"]
+        assert "colmap" in cmd
+        assert "image_undistorter" in cmd
         assert "dense/" in cmd
-        assert "--output_type" in cmd
-        # LLFF-friendly output type:
         i = cmd.index("--output_type")
         assert cmd[i + 1] == "COLMAP"

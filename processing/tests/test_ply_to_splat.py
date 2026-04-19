@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import random
 import struct
 from pathlib import Path
 
@@ -81,8 +82,6 @@ class TestQuaternionEncoding:
         assert r == 128
 
     def test_all_bytes_in_u8_range(self):
-        import random
-
         random.seed(0)
         for _ in range(50):
             q = tuple(random.uniform(-1, 1) for _ in range(4))
@@ -171,40 +170,38 @@ def _write_minimal_3dgs_ply(path: Path, n: int = 3) -> None:
     PlyData([el], text=False).write(str(path))
 
 
-def test_convert_ply_file_emits_correct_size(tmp_path: Path):
-    ply = tmp_path / "scene.ply"
-    splat = tmp_path / "scene.splat"
-    _write_minimal_3dgs_ply(ply, n=5)
+@pytest.fixture
+def convert_synthetic_scene(tmp_path: Path):
+    """Write a synthetic 3DGS PLY of size `n` and convert it. Returns
+    (n_written, splat_bytes)."""
 
-    n_written = convert_ply_file_to_splat(ply, splat)
+    def _run(n: int):
+        ply = tmp_path / "scene.ply"
+        splat = tmp_path / "scene.splat"
+        _write_minimal_3dgs_ply(ply, n=n)
+        n_written = convert_ply_file_to_splat(ply, splat)
+        return n_written, splat.read_bytes()
+
+    return _run
+
+
+def test_convert_ply_file_emits_correct_size(convert_synthetic_scene):
+    n_written, raw = convert_synthetic_scene(n=5)
     assert n_written == 5
-    assert splat.stat().st_size == 5 * BYTES_PER_SPLAT
+    assert len(raw) == 5 * BYTES_PER_SPLAT
 
 
-def test_convert_ply_file_positions_roundtrip(tmp_path: Path):
-    ply = tmp_path / "scene.ply"
-    splat = tmp_path / "scene.splat"
-    _write_minimal_3dgs_ply(ply, n=4)
-
-    convert_ply_file_to_splat(ply, splat)
-    raw = splat.read_bytes()
-
+def test_convert_ply_file_positions_roundtrip(convert_synthetic_scene):
+    _, raw = convert_synthetic_scene(n=4)
     for i in range(4):
-        offset = i * BYTES_PER_SPLAT
-        x, y, z = struct.unpack_from("<fff", raw, offset)
+        x, y, z = struct.unpack_from("<fff", raw, i * BYTES_PER_SPLAT)
         assert x == pytest.approx(float(i))
         assert y == pytest.approx(float(i) * 2)
         assert z == pytest.approx(float(i) * 3)
 
 
-def test_convert_ply_file_scales_are_exponentiated(tmp_path: Path):
-    ply = tmp_path / "scene.ply"
-    splat = tmp_path / "scene.splat"
-    _write_minimal_3dgs_ply(ply, n=2)
-
-    convert_ply_file_to_splat(ply, splat)
-    raw = splat.read_bytes()
-
+def test_convert_ply_file_scales_are_exponentiated(convert_synthetic_scene):
+    _, raw = convert_synthetic_scene(n=2)
     # First record's scale_0 was log(0.1), so decoded should be ~0.1
     sx, _sy, _sz = struct.unpack_from("<fff", raw, 12)
     assert sx == pytest.approx(0.1, rel=1e-4)
