@@ -23,7 +23,8 @@ export default function HomePage() {
         </h1>
         <p className="text-lg md:text-xl text-[color:var(--muted)] mt-6 max-w-2xl mx-auto">
           Upload a 15–45 second video. We turn it into a 4D scene you can move
-          through, rewind, and share — privately.
+          through, rewind, and share — privately. The original video is
+          deleted once the 4D version is ready.
         </p>
         <div className="mt-10 flex items-center justify-center gap-3">
           <Link href="/new" className="btn btn-primary text-base">

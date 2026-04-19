@@ -79,6 +79,12 @@ export default async function MemoryPage({
                 {new Date(memory.created_at).toLocaleString()}
               </Detail>
             </dl>
+            {memory.status === "ready" && (
+              <p className="mt-4 pt-4 border-t border-white/5 text-xs text-[color:var(--muted)]">
+                The original video has been deleted. Only the 4D version is
+                kept.
+              </p>
+            )}
           </div>
           <SharePanel memory={memory} />
         </div>

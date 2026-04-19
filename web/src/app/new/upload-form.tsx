@@ -249,6 +249,16 @@ export function UploadForm() {
         </div>
         <div>
           <p className="font-semibold text-[color:var(--foreground)] mb-1">
+            We keep only the 4D version
+          </p>
+          <p>
+            Once processing finishes, the original video file is deleted from
+            our storage. The 4D scene is the only long-term artifact — we
+            can&apos;t restore the original clip later.
+          </p>
+        </div>
+        <div>
+          <p className="font-semibold text-[color:var(--foreground)] mb-1">
             Safety review
           </p>
           <p>

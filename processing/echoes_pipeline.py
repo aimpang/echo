@@ -292,8 +292,9 @@ def run_processing_job(sb: "Client", memory: Memory) -> None:
         set_status(sb, memory.id, **update)
         LOG.info("Memory %s is ready (%d frames)", memory.id, result["frame_count"])
 
-        # Cleanup on success: delete the source video from storage and wipe
-        # the local job dir. Failures here are logged but don't revert status.
+        # Retention policy: only the .splat is kept long-term. Delete the
+        # source video from storage and wipe the local job dir. Failures
+        # here are logged but don't revert the memory's `ready` status.
         delete_source_video(sb, memory)
         try:
             shutil.rmtree(job_dir, ignore_errors=True)
