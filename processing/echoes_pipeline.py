@@ -42,6 +42,7 @@ from echoes.fourdgs.pipeline import (
     run_full_pipeline,
     write_benchmark_log,
 )
+from echoes.fourdgs.preflight import check_preflight, format_preflight_report
 
 LOG = logging.getLogger("echoes")
 logging.basicConfig(
@@ -311,6 +312,14 @@ def run_processing_job(sb: "Client", memory: Memory) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _run_preflight_or_die() -> None:
+    issues = check_preflight(env=os.environ)
+    if issues:
+        LOG.error("\n%s", format_preflight_report(issues))
+        raise SystemExit(1)
+    LOG.info("Preflight OK")
+
+
 def run_benchmark(argv: list[str]) -> int:
     parser = build_benchmark_parser()
     args = parser.parse_args(argv)
@@ -318,6 +327,13 @@ def run_benchmark(argv: list[str]) -> int:
     video = Path(args.video).resolve()
     if not video.exists():
         raise SystemExit(f"Video not found: {video}")
+
+    # Let --repo-dir / --config flags populate env so preflight sees them.
+    if args.repo_dir:
+        os.environ["FOURDGS_REPO_DIR"] = args.repo_dir
+    if args.config:
+        os.environ["FOURDGS_CONFIG"] = args.config
+    _run_preflight_or_die()
 
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -351,6 +367,7 @@ def run_benchmark(argv: list[str]) -> int:
 
 def run_worker() -> None:
     WORK_DIR.mkdir(parents=True, exist_ok=True)
+    _run_preflight_or_die()
     sb = client()
     LOG.info("Echoes worker online. Work dir: %s", WORK_DIR)
     while True:

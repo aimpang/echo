@@ -38,13 +38,14 @@ pip install -r requirements.txt
 ### Vendor hustvl/4DGaussians
 
 ```powershell
-git clone https://github.com/hustvl/4DGaussians vendor/4DGaussians
+# One-shot clone helper (wraps `git clone --recurse-submodules`):
+python setup_4dgaussians.py
+
+# Then build the CUDA extensions against your torch/CUDA install:
 cd vendor/4DGaussians
-# Follow upstream install: build diff-gaussian-rasterization + simple-knn CUDA
-# extensions against your torch/CUDA (same CUDA version as the torch wheel).
+pip install -r requirements.txt
 pip install -e submodules/depth-diff-gaussian-rasterization
 pip install -e submodules/simple-knn
-pip install -r requirements.txt
 cd ../..
 ```
 
@@ -59,6 +60,18 @@ FOURDGS_CONFIG=./vendor/4DGaussians/arguments/dynerf/default.py
 
 - **ffmpeg** — frame extraction
 - **colmap** — structure-from-motion (feature, matcher, mapper, undistorter)
+
+## Preflight
+
+The worker runs a preflight check at startup and refuses to start if anything
+is missing. It verifies:
+
+- `ffmpeg` and `colmap` are on `PATH`
+- `FOURDGS_REPO_DIR` and `FOURDGS_CONFIG` env vars are set
+- Both paths exist on disk
+
+If you see a preflight failure, run `python setup_4dgaussians.py` and then
+build the CUDA extensions as above.
 
 ## Running the worker
 
