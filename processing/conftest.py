@@ -1,0 +1,11 @@
+"""Pytest conftest — puts the processing/ root on sys.path so `import echoes.*`
+works without a formal install during local testing."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_root = Path(__file__).resolve().parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))

@@ -1,8 +1,24 @@
 # Echoes Processing Worker
 
-Runs locally on an RTX 5080 to process uploaded videos into Gaussian Splatting
-scenes. Polls Supabase for jobs, runs safety + splat training, writes results
-back.
+Runs locally on an RTX 5080 to turn uploaded videos into **4D Gaussian
+Splatting** scenes. Polls Supabase for jobs, stages a COLMAP dataset, trains a
+4DGaussians model (hustvl/4DGaussians, CVPR 2024), exports one `.splat` per
+timestep plus a `manifest.json`, and uploads the bundle back to Supabase.
+
+## Pipeline stages
+
+```
+video ──► ffmpeg frames ──► COLMAP (features/match/map/undistort)
+      ──► stage_dataset (COLMAP + times.txt)
+      ──► 4DGaussians train.py
+      ──► 4DGaussians render.py (per-timestep PLY)
+      ──► PLY → SPLAT + manifest.json
+      ──► upload to splats/<user>/<memory>/
+```
+
+Each stage is wrapped in `StageTimer` so the worker emits a per-stage timing
+log on success (and `--benchmark` prints it to stdout + writes
+`benchmark.json`).
 
 ## Setup
 
@@ -11,46 +27,77 @@ cd processing
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# Install PyTorch with CUDA 12.x wheels for RTX 5080:
+# PyTorch with CUDA 12.x wheels for RTX 5080 (Blackwell sm_120 — use the
+# latest nightly/stable matching your CUDA toolkit).
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 # Core deps
 pip install -r requirements.txt
-
-# gsplat (build against the same torch/cuda)
-pip install gsplat
-
-# System binaries required:
-#   - ffmpeg on PATH
-#   - (optional) COLMAP on PATH for pose estimation
 ```
 
-Copy `.env.example` to `.env` and fill in your Supabase service role key.
-
-## Running
+### Vendor hustvl/4DGaussians
 
 ```powershell
+git clone https://github.com/hustvl/4DGaussians vendor/4DGaussians
+cd vendor/4DGaussians
+# Follow upstream install: build diff-gaussian-rasterization + simple-knn CUDA
+# extensions against your torch/CUDA (same CUDA version as the torch wheel).
+pip install -e submodules/depth-diff-gaussian-rasterization
+pip install -e submodules/simple-knn
+pip install -r requirements.txt
+cd ../..
+```
+
+Point the worker at the repo and a config file via `.env`:
+
+```
+FOURDGS_REPO_DIR=./vendor/4DGaussians
+FOURDGS_CONFIG=./vendor/4DGaussians/arguments/dynerf/default.py
+```
+
+### System binaries on PATH
+
+- **ffmpeg** — frame extraction
+- **colmap** — structure-from-motion (feature, matcher, mapper, undistorter)
+
+## Running the worker
+
+```powershell
+# Copy .env.example -> .env, fill in Supabase service role key + FOURDGS_*
 python echoes_pipeline.py
 ```
 
 The worker:
 
-1. Polls `memories` for rows with `status = 'scanning'` and runs safety (auto-pass
-   during local dev unless `HIVE_API_KEY` is set and `AUTO_PASS_SAFETY=false`).
-2. Advances to `processing`, extracts frames with ffmpeg, trains a splat via
-   `gsplat.examples.simple_trainer`, uploads `.splat`/`.ply` to the `splats`
-   bucket, and marks the memory `ready`.
-3. Any error moves the memory to `processing_failed`.
+1. Polls for `status = 'scanning'`, runs safety (auto-pass during early access
+   unless `HIVE_API_KEY` is set and `AUTO_PASS_SAFETY=false`), then advances
+   to `processing`.
+2. Runs the full 4DGaussians pipeline and emits a timing report.
+3. Uploads every `.splat` and `manifest.json` under
+   `splats/<user_id>/<memory_id>/`; sets `splat_path` on the memory to the
+   manifest key.
+4. Any error moves the memory to `processing_failed`.
 
-## Extending to true 4DGS
+## Benchmark mode (no Supabase)
 
-`run_gsplat` in `echoes_pipeline.py` currently trains a single static 3D scene.
-To make memories time-varying:
+```powershell
+python echoes_pipeline.py --benchmark `
+  --video .\samples\clip.mp4 `
+  --out .\work\bench `
+  --fps 8 --iterations 8000
+```
 
-1. Replace the single gsplat call with a 4D variant (e.g. 4DGaussians,
-   Dynamic3DGS, or Dreamgaussian4D).
-2. Export one splat per timestep and upload them as separate objects
-   (`splats/<user>/<memory>/frame_<nnnn>.splat`).
-3. Save a manifest JSON listing `{url, timeSeconds}` per frame in the
-   `splats` bucket, and extend the web viewer to read it and pass `frames`
-   to `<SplatViewer>`.
+Runs every stage on a local file and writes `work/bench/benchmark.json` plus
+a human-readable timing table. Useful for tuning iteration count / fps on the
+5080 and sharing numbers.
+
+## Tests
+
+Pure logic is unit-tested:
+
+```powershell
+.\.venv\Scripts\python -m pytest -q
+```
+
+Covers: PLY→SPLAT conversion, ffmpeg/COLMAP command builders, dataset staging,
+manifest builder, and the pipeline's pure helpers.

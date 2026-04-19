@@ -1,21 +1,23 @@
 # Echoes local 4DGS processing worker — RTX 5080
 # Install PyTorch with the right CUDA build separately (see README).
 
+# Supabase + env
 supabase>=2.7.0
 python-dotenv>=1.0.1
 requests>=2.32.0
 tqdm>=4.66.0
 
-# Gaussian splatting pipeline
-# gsplat requires a compatible CUDA + PyTorch install.
-# Pin here for documentation; install via the README steps.
-# gsplat==1.4.0
-# torch==2.4.0
-
 # Video + image utilities
 imageio[ffmpeg]>=2.34.0
 opencv-python-headless>=4.10.0
 numpy>=1.26.0
+Pillow>=10.3.0
+plyfile>=1.0.3
 
-# Optional: Hive moderation
-# pip install requests  (already above)
+# Gaussian splatting runtime — install separately via README:
+#   torch (CUDA 12.x wheel for RTX 5080 / Blackwell)
+#   4DGaussians repo (cloned, with diff-gaussian-rasterization + simple-knn extensions built)
+#   COLMAP binary on PATH
+
+# Dev
+pytest>=8.3.0

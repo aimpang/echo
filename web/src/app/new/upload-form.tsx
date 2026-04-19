@@ -237,14 +237,26 @@ export function UploadForm() {
         />
       </div>
 
-      <div className="card p-4 text-sm text-[color:var(--muted)]">
-        <p className="font-semibold text-[color:var(--foreground)] mb-1">
-          Private by default
-        </p>
-        <p>
-          Your video is uploaded privately to your account. Only you can see it
-          unless you create a share link.
-        </p>
+      <div className="card p-4 text-sm text-[color:var(--muted)] space-y-3">
+        <div>
+          <p className="font-semibold text-[color:var(--foreground)] mb-1">
+            Private by default
+          </p>
+          <p>
+            Your video is uploaded privately to your account. Only you can see
+            it unless you create a share link.
+          </p>
+        </div>
+        <div>
+          <p className="font-semibold text-[color:var(--foreground)] mb-1">
+            Safety review
+          </p>
+          <p>
+            During early access, uploads are auto-approved and spot-checked
+            manually. Automated moderation is coming soon — please only upload
+            content you have the right to share.
+          </p>
+        </div>
       </div>
 
       <button

@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { isValidShareToken } from "@/lib/sharing/token";
 import type { MemoryRow } from "@/lib/supabase/database.types";
 import { SplatViewer } from "@/components/splat-viewer";
+import { loadSplatSource } from "@/lib/viewer/load-manifest";
 
 type PageParams = { token: string };
 
@@ -27,13 +28,7 @@ export default async function SharedMemoryPage({
   if (!data) notFound();
   const memory = data as MemoryRow;
 
-  let splatUrl: string | null = null;
-  if (memory.splat_path) {
-    const { data: signed } = await supabase.storage
-      .from("splats")
-      .createSignedUrl(memory.splat_path, 60 * 60);
-    splatUrl = signed?.signedUrl ?? null;
-  }
+  const splatSource = await loadSplatSource(supabase, memory.splat_path);
 
   return (
     <main className="min-h-dvh">
@@ -53,8 +48,10 @@ export default async function SharedMemoryPage({
           <p className="text-[color:var(--muted)] mt-2">{memory.description}</p>
         )}
         <div className="mt-6 aspect-video card p-0 overflow-hidden">
-          {splatUrl ? (
-            <SplatViewer src={splatUrl} />
+          {splatSource?.kind === "frames" ? (
+            <SplatViewer frames={splatSource.frames} initialPlaying />
+          ) : splatSource?.kind === "single" ? (
+            <SplatViewer src={splatSource.url} />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-[color:var(--muted)]">
               This memory isn&apos;t ready yet.

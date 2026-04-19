@@ -1,33 +1,45 @@
 """
 Echoes local processing worker.
 
-Polls Supabase for memories that need processing, runs safety + 4D Gaussian
-Splatting (via `gsplat`), and writes results back.
+Two modes:
 
-Run locally on the RTX 5080:
-    python echoes_pipeline.py
+1. Worker mode (default):
+       python echoes_pipeline.py
+   Polls Supabase for memories in `scanning` / `processing` status and runs
+   the full 4DGaussians pipeline end to end, uploading per-frame .splat files
+   and a manifest.json to the `splats` bucket.
 
-State machine (must match src/lib/memory/status.ts on the web side):
+2. Benchmark mode:
+       python echoes_pipeline.py --benchmark --video clip.mp4 --out work/bench
+   Runs the pipeline on a local video without touching Supabase. Emits a
+   per-stage timing report and writes `benchmark.json`. Use this to validate
+   RTX 5080 performance.
+
+State machine (must match web/src/lib/memory/status.ts):
     uploading -> scanning -> processing -> ready
-                      \-> rejected
-                      \-> processing_failed
+                      \\-> rejected
+                      \\-> processing_failed
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import shutil
-import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-import requests
-from dotenv import load_dotenv
-from supabase import Client, create_client
+if TYPE_CHECKING:
+    from supabase import Client
+
+from echoes.fourdgs.pipeline import (
+    build_benchmark_parser,
+    format_timing_report,
+    run_full_pipeline,
+    write_benchmark_log,
+)
 
 LOG = logging.getLogger("echoes")
 logging.basicConfig(
@@ -35,18 +47,27 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-5s  %(message)s",
 )
 
-load_dotenv()
+try:
+    from dotenv import load_dotenv
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    load_dotenv()
+except ImportError:
+    pass
+
+
+def _env(name: str, default: Optional[str] = None, required: bool = False) -> str:
+    val = os.environ.get(name, default)
+    if required and not val:
+        raise SystemExit(f"Missing required env var: {name}")
+    return val or ""
+
+
 AUTO_PASS_SAFETY = os.environ.get("AUTO_PASS_SAFETY", "true").lower() == "true"
 HIVE_API_KEY = os.environ.get("HIVE_API_KEY")
 WORK_DIR = Path(os.environ.get("WORK_DIR", "./work")).resolve()
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
 FRAMES_PER_SECOND = int(os.environ.get("FRAMES_PER_SECOND", "8"))
 MAX_TRAIN_ITERATIONS = int(os.environ.get("MAX_TRAIN_ITERATIONS", "8000"))
-
-WORK_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -63,17 +84,18 @@ class Memory:
 # ---------------------------------------------------------------------------
 
 
-def client() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+def client() -> "Client":
+    from supabase import create_client
+
+    url = _env("SUPABASE_URL", required=True)
+    key = _env("SUPABASE_SERVICE_ROLE_KEY", required=True)
+    return create_client(url, key)
 
 
-def claim_next(sb: Client, status: str) -> Optional[Memory]:
-    """Fetch one memory in the given status. Simple FIFO; no locking for MVP."""
+def claim_next(sb: "Client", status: str) -> Optional[Memory]:
     res = (
         sb.table("memories")
-        .select(
-            "id,user_id,status,source_video_path,duration_seconds"
-        )
+        .select("id,user_id,status,source_video_path,duration_seconds")
         .eq("status", status)
         .order("created_at")
         .limit(1)
@@ -92,11 +114,11 @@ def claim_next(sb: Client, status: str) -> Optional[Memory]:
     )
 
 
-def set_status(sb: Client, memory_id: str, **fields) -> None:
+def set_status(sb: "Client", memory_id: str, **fields) -> None:
     sb.table("memories").update(fields).eq("id", memory_id).execute()
 
 
-def download_video(sb: Client, memory: Memory, dest: Path) -> Path:
+def download_video(sb: "Client", memory: Memory, dest: Path) -> Path:
     if not memory.source_video_path:
         raise RuntimeError("Memory has no source_video_path")
     LOG.info("Downloading %s", memory.source_video_path)
@@ -105,29 +127,41 @@ def download_video(sb: Client, memory: Memory, dest: Path) -> Path:
     return dest
 
 
-def upload_splat(sb: Client, memory: Memory, splat_file: Path) -> str:
-    key = f"{memory.user_id}/{memory.id}.splat"
-    LOG.info("Uploading splat to %s", key)
-    sb.storage.from_("splats").upload(
-        path=key,
-        file=splat_file.read_bytes(),
-        file_options={"content-type": "application/octet-stream", "upsert": "true"},
-    )
-    return key
+def upload_splat_dir(sb: "Client", memory: Memory, splat_dir: Path) -> str:
+    """Upload every .splat plus manifest.json and return the manifest object key."""
+    prefix = f"{memory.user_id}/{memory.id}"
+    manifest_key = f"{prefix}/manifest.json"
+
+    for path in sorted(splat_dir.iterdir()):
+        if not path.is_file():
+            continue
+        key = f"{prefix}/{path.name}"
+        content_type = (
+            "application/json"
+            if path.suffix == ".json"
+            else "application/octet-stream"
+        )
+        LOG.info("Uploading %s", key)
+        sb.storage.from_("splats").upload(
+            path=key,
+            file=path.read_bytes(),
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+    return manifest_key
 
 
 # ---------------------------------------------------------------------------
-# Pipeline stages
+# Safety
 # ---------------------------------------------------------------------------
 
 
 def run_safety_scan(video_path: Path) -> tuple[bool, Optional[str]]:
-    """Return (passed, flag)."""
     if AUTO_PASS_SAFETY or not HIVE_API_KEY:
         LOG.info("Auto-passing safety (AUTO_PASS_SAFETY=%s)", AUTO_PASS_SAFETY)
         return True, None
 
-    # Minimal Hive integration. See https://docs.thehive.ai/
+    import requests
+
     with open(video_path, "rb") as f:
         response = requests.post(
             "https://api.thehive.ai/api/v2/task/sync",
@@ -137,7 +171,6 @@ def run_safety_scan(video_path: Path) -> tuple[bool, Optional[str]]:
         )
     response.raise_for_status()
     result = response.json()
-    # Very simple heuristic: reject if any class scores above 0.8
     for output in result.get("status", [{}])[0].get("response", {}).get("output", []):
         for cls in output.get("classes", []):
             if cls.get("score", 0) > 0.8 and cls.get("class") in {
@@ -150,70 +183,35 @@ def run_safety_scan(video_path: Path) -> tuple[bool, Optional[str]]:
     return True, None
 
 
-def extract_frames(video_path: Path, frames_dir: Path) -> int:
-    frames_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-vf",
-        f"fps={FRAMES_PER_SECOND}",
-        "-qscale:v",
-        "2",
-        str(frames_dir / "frame_%04d.jpg"),
-    ]
-    LOG.info("Extracting frames: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-    return len(list(frames_dir.glob("frame_*.jpg")))
-
-
-def run_gsplat(frames_dir: Path, out_dir: Path) -> Path:
-    """
-    Run gsplat training on the extracted frames.
-
-    For this MVP we invoke gsplat's built-in `simple_trainer` via a subprocess.
-    Swap in a true 4D variant (e.g. 4DGaussians) when extending beyond static
-    scenes.
-
-    Expected to produce `<out_dir>/point_cloud.ply` and/or `<out_dir>/out.splat`.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # TODO: replace with a 4D pipeline.
-    cmd = [
-        sys.executable,
-        "-m",
-        "gsplat.examples.simple_trainer",
-        "default",
-        "--data_dir",
-        str(frames_dir),
-        "--result_dir",
-        str(out_dir),
-        "--max_steps",
-        str(MAX_TRAIN_ITERATIONS),
-        "--save_ply",
-    ]
-    LOG.info("Running gsplat: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-
-    splat_path = out_dir / "out.splat"
-    if not splat_path.exists():
-        # gsplat outputs ply; convert to .splat if you have a converter.
-        ply = next(out_dir.glob("**/*.ply"), None)
-        if ply is None:
-            raise RuntimeError("gsplat produced no ply/splat output")
-        LOG.info("Falling back to PLY output at %s", ply)
-        return ply
-    return splat_path
-
-
 # ---------------------------------------------------------------------------
-# Job runners
+# Pipeline resolution (env + args)
 # ---------------------------------------------------------------------------
 
 
-def run_scanning_job(sb: Client, memory: Memory) -> None:
+def _resolve_repo_and_config(
+    repo_dir_arg: Optional[str], config_arg: Optional[str]
+) -> tuple[Path, Path]:
+    repo_dir = repo_dir_arg or os.environ.get("FOURDGS_REPO_DIR")
+    config = config_arg or os.environ.get("FOURDGS_CONFIG")
+    if not repo_dir:
+        raise SystemExit(
+            "FOURDGS_REPO_DIR not set. Clone hustvl/4DGaussians and point "
+            "this env var at the repo root."
+        )
+    if not config:
+        raise SystemExit(
+            "FOURDGS_CONFIG not set. Point it at a config .py inside the "
+            "4DGaussians repo (e.g. arguments/dynerf/default.py)."
+        )
+    return Path(repo_dir), Path(config)
+
+
+# ---------------------------------------------------------------------------
+# Worker jobs
+# ---------------------------------------------------------------------------
+
+
+def run_scanning_job(sb: "Client", memory: Memory) -> None:
     job_dir = WORK_DIR / memory.id
     job_dir.mkdir(parents=True, exist_ok=True)
     video_path = job_dir / "input.mp4"
@@ -222,7 +220,7 @@ def run_scanning_job(sb: Client, memory: Memory) -> None:
         download_video(sb, memory, video_path)
         passed, flag = run_safety_scan(video_path)
         if not passed:
-            LOG.warning("Safety scan rejected memory %s (%s)", memory.id, flag)
+            LOG.warning("Safety scan rejected %s (%s)", memory.id, flag)
             set_status(
                 sb,
                 memory.id,
@@ -244,7 +242,7 @@ def run_scanning_job(sb: Client, memory: Memory) -> None:
         set_status(sb, memory.id, status="processing_failed", safety_flag=str(err))
 
 
-def run_processing_job(sb: Client, memory: Memory) -> None:
+def run_processing_job(sb: "Client", memory: Memory) -> None:
     job_dir = WORK_DIR / memory.id
     job_dir.mkdir(parents=True, exist_ok=True)
     video_path = job_dir / "input.mp4"
@@ -252,36 +250,80 @@ def run_processing_job(sb: Client, memory: Memory) -> None:
         download_video(sb, memory, video_path)
 
     try:
-        frames_dir = job_dir / "frames"
-        n_frames = extract_frames(video_path, frames_dir)
-        LOG.info("Extracted %d frames", n_frames)
+        repo_dir, config_file = _resolve_repo_and_config(None, None)
+        result = run_full_pipeline(
+            video_path=video_path,
+            work_dir=job_dir,
+            fps=FRAMES_PER_SECOND,
+            iterations=MAX_TRAIN_ITERATIONS,
+            repo_dir=repo_dir,
+            config_file=config_file,
+        )
 
-        out_dir = job_dir / "gsplat"
-        splat_path = run_gsplat(frames_dir, out_dir)
+        LOG.info("\n%s", format_timing_report(result["timings"]))
 
-        key = upload_splat(sb, memory, splat_path)
+        splat_dir: Path = result["splat_dir"]  # type: ignore[assignment]
+        manifest_key = upload_splat_dir(sb, memory, splat_dir)
+
         set_status(
             sb,
             memory.id,
             status="ready",
-            splat_path=key,
+            splat_path=manifest_key,
+            duration_seconds=result["duration_seconds"],
             processing_completed_at="now()",
         )
-        LOG.info("Memory %s is ready", memory.id)
+        LOG.info("Memory %s is ready (%d frames)", memory.id, result["frame_count"])
     except Exception as err:
         LOG.exception("Processing failed for %s", memory.id)
         set_status(sb, memory.id, status="processing_failed", safety_flag=str(err))
-    finally:
-        # Keep the job_dir around on failure for inspection; clean on success.
-        pass
 
 
 # ---------------------------------------------------------------------------
-# Main loop
+# Benchmark
 # ---------------------------------------------------------------------------
 
 
-def main() -> None:
+def run_benchmark(argv: list[str]) -> int:
+    parser = build_benchmark_parser()
+    args = parser.parse_args(argv)
+
+    video = Path(args.video).resolve()
+    if not video.exists():
+        raise SystemExit(f"Video not found: {video}")
+
+    out_dir = Path(args.out).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_dir, config_file = _resolve_repo_and_config(args.repo_dir, args.config)
+
+    LOG.info("Benchmark: video=%s out=%s fps=%d iters=%d", video, out_dir, args.fps, args.iterations)
+
+    result = run_full_pipeline(
+        video_path=video,
+        work_dir=out_dir,
+        fps=args.fps,
+        iterations=args.iterations,
+        repo_dir=repo_dir,
+        config_file=config_file,
+    )
+
+    report = format_timing_report(result["timings"])
+    print("\n" + report)
+    log_path = write_benchmark_log(out_dir, result)
+    print(f"\nBenchmark log: {log_path}")
+    print(f"Manifest:      {result['manifest_path']}")
+    print(f"Frames:        {result['frame_count']}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Worker main loop
+# ---------------------------------------------------------------------------
+
+
+def run_worker() -> None:
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
     sb = client()
     LOG.info("Echoes worker online. Work dir: %s", WORK_DIR)
     while True:
@@ -307,5 +349,13 @@ def main() -> None:
             time.sleep(POLL_INTERVAL)
 
 
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "--benchmark":
+        return run_benchmark(argv[1:])
+    run_worker()
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

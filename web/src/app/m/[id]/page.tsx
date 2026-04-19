@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { MemoryRow } from "@/lib/supabase/database.types";
 import { StatusBadge } from "@/components/status-badge";
 import { SplatViewer } from "@/components/splat-viewer";
+import { loadSplatSource } from "@/lib/viewer/load-manifest";
 import { SharePanel } from "./share-panel";
 
 type PageParams = { id: string };
@@ -30,13 +31,10 @@ export default async function MemoryPage({
   if (!data) notFound();
   const memory = data as MemoryRow;
 
-  let splatUrl: string | null = null;
-  if (memory.status === "ready" && memory.splat_path) {
-    const { data: signed } = await supabase.storage
-      .from("splats")
-      .createSignedUrl(memory.splat_path, 60 * 60);
-    splatUrl = signed?.signedUrl ?? null;
-  }
+  const splatSource =
+    memory.status === "ready"
+      ? await loadSplatSource(supabase, memory.splat_path)
+      : null;
 
   return (
     <main className="min-h-dvh">
@@ -56,8 +54,10 @@ export default async function MemoryPage({
         )}
 
         <div className="mt-8 aspect-video card p-0 overflow-hidden">
-          {memory.status === "ready" && splatUrl ? (
-            <SplatViewer src={splatUrl} />
+          {splatSource?.kind === "frames" ? (
+            <SplatViewer frames={splatSource.frames} initialPlaying />
+          ) : splatSource?.kind === "single" ? (
+            <SplatViewer src={splatSource.url} />
           ) : (
             <ProcessingPlaceholder status={memory.status} />
           )}
