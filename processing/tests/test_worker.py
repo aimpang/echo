@@ -14,6 +14,7 @@ from echoes.worker import (
     build_failure_update,
     build_splat_storage_prefix,
     content_type_for_upload,
+    delete_local_video,
     job_log_prefix,
     should_download_video,
 )
@@ -75,6 +76,30 @@ class TestBuildFailureUpdate:
         # Keep the DB happy: safety_flag is a free-text column but storing
         # a 5 KB stacktrace tail is noise. Cap at a reasonable length.
         assert len(payload["safety_flag"]) <= 500
+
+
+class TestDeleteLocalVideo:
+    def test_removes_existing_file(self, tmp_path: Path):
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"frames")
+        delete_local_video(video)
+        assert not video.exists()
+
+    def test_returns_true_when_file_existed(self, tmp_path: Path):
+        video = tmp_path / "input.mp4"
+        video.write_bytes(b"x")
+        assert delete_local_video(video) is True
+
+    def test_returns_false_when_file_already_missing(self, tmp_path: Path):
+        assert delete_local_video(tmp_path / "gone.mp4") is False
+
+    def test_does_not_crash_when_file_missing(self, tmp_path: Path):
+        # Explicit: the retention policy runs cleanup unconditionally, so
+        # "file already deleted" must be a normal case, not an exception.
+        delete_local_video(tmp_path / "gone.mp4")
+
+    def test_does_not_crash_when_parent_dir_missing(self, tmp_path: Path):
+        delete_local_video(tmp_path / "ghost" / "input.mp4")
 
 
 class TestJobLogPrefix:

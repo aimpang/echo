@@ -50,6 +50,7 @@ from echoes.worker import (
     build_failure_update,
     build_splat_storage_prefix,
     content_type_for_upload,
+    delete_local_video,
     job_log_prefix,
     should_download_video,
 )
@@ -326,12 +327,25 @@ def publish_splats(sb: "Client", memory: Memory, result: dict) -> str:
 
 
 def cleanup_after_success(sb: "Client", memory: Memory, job_dir: Path) -> None:
-    """Drop the source video from storage and wipe the local job dir.
-
-    Both are best-effort: a failure here doesn't invalidate the ready memory.
+    """Enforce the retention policy: after a successful run the original
+    video exists in three places (storage, local job dir, in-memory data
+    during upload). Wipe the first two. Every step is best-effort and
+    idempotent — a failure here doesn't invalidate the ready memory, and
+    re-running on a partially cleaned job is expected (crash recovery).
     """
     log_prefix = job_log_prefix(memory.id, "cleanup")
+
+    # 1. Storage copy (canonical "original").
     delete_source_video(sb, memory)
+
+    # 2. Local staged copy in the job dir.
+    local_video = job_dir / "input.mp4"
+    if delete_local_video(local_video):
+        LOG.info("%s deleted local video %s", log_prefix, local_video)
+    else:
+        LOG.info("%s local video already gone (%s)", log_prefix, local_video)
+
+    # 3. The rest of the job workspace (frames, COLMAP, model, splats).
     try:
         shutil.rmtree(job_dir, ignore_errors=True)
         LOG.info("%s removed job dir %s", log_prefix, job_dir)

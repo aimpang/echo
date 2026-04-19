@@ -56,3 +56,20 @@ def build_failure_update(error: BaseException) -> Dict[str, Any]:
 def job_log_prefix(memory_id: str, stage: str) -> str:
     """Consistent prefix for every log line inside a worker stage."""
     return f"[memory={memory_id} stage={stage}]"
+
+
+def delete_local_video(video_path: Path) -> bool:
+    """Delete the staged source video from disk if it's still there.
+
+    Idempotent: returns True if a file was removed, False if the path was
+    already missing (file, parent dir, anything). Never raises on a
+    missing path — the retention policy runs cleanup unconditionally and
+    a crashed-then-resumed job may have already been cleaned.
+    """
+    try:
+        if not video_path.exists():
+            return False
+        video_path.unlink(missing_ok=True)
+        return True
+    except FileNotFoundError:
+        return False
