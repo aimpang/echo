@@ -39,6 +39,7 @@ coverage/
 # Python worker
 processing/.venv/
 processing/work/
+processing/vendor/
 processing/__pycache__/
 processing/**/__pycache__/
 *.pyc
