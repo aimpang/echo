@@ -13,7 +13,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from echoes.fourdgs.dataset import stage_dataset
 from echoes.fourdgs.export import (
@@ -48,6 +48,23 @@ def format_timing_report(timings: Mapping[str, float]) -> str:
     lines.append("-" * 33)
     lines.append(f"{'total':<25}{total_seconds(timings):>8.2f}")
     return "\n".join(lines)
+
+
+def build_completion_update(
+    manifest_key: str, duration_seconds: float
+) -> Dict[str, Any]:
+    """Fields to update on the memory row after the pipeline succeeds.
+
+    Nulls out `source_video_path` because the source video is deleted from
+    storage on success — keeping the old path would point at a missing object.
+    """
+    return {
+        "status": "ready",
+        "splat_path": manifest_key,
+        "duration_seconds": duration_seconds,
+        "processing_completed_at": "now()",
+        "source_video_path": None,
+    }
 
 
 def build_benchmark_parser() -> argparse.ArgumentParser:

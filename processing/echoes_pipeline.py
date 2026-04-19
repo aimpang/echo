@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
 
 from echoes.fourdgs.pipeline import (
     build_benchmark_parser,
+    build_completion_update,
     format_timing_report,
     run_full_pipeline,
     write_benchmark_log,
@@ -125,6 +127,24 @@ def download_video(sb: "Client", memory: Memory, dest: Path) -> Path:
     data = sb.storage.from_("videos").download(memory.source_video_path)
     dest.write_bytes(data)
     return dest
+
+
+def delete_source_video(sb: "Client", memory: Memory) -> bool:
+    """Remove the uploaded video from the `videos` bucket. Non-fatal: logs
+    and returns False on failure so a finished memory isn't marked failed
+    just because cleanup couldn't delete one object."""
+    if not memory.source_video_path:
+        return True
+    try:
+        sb.storage.from_("videos").remove([memory.source_video_path])
+        LOG.info("Deleted source video %s", memory.source_video_path)
+        return True
+    except Exception:
+        LOG.exception(
+            "Could not delete source video %s (memory is still ready)",
+            memory.source_video_path,
+        )
+        return False
 
 
 def upload_splat_dir(sb: "Client", memory: Memory, splat_dir: Path) -> str:
@@ -265,15 +285,21 @@ def run_processing_job(sb: "Client", memory: Memory) -> None:
         splat_dir: Path = result["splat_dir"]  # type: ignore[assignment]
         manifest_key = upload_splat_dir(sb, memory, splat_dir)
 
-        set_status(
-            sb,
-            memory.id,
-            status="ready",
-            splat_path=manifest_key,
-            duration_seconds=result["duration_seconds"],
-            processing_completed_at="now()",
+        update = build_completion_update(
+            manifest_key=manifest_key,
+            duration_seconds=float(result["duration_seconds"]),  # type: ignore[arg-type]
         )
+        set_status(sb, memory.id, **update)
         LOG.info("Memory %s is ready (%d frames)", memory.id, result["frame_count"])
+
+        # Cleanup on success: delete the source video from storage and wipe
+        # the local job dir. Failures here are logged but don't revert status.
+        delete_source_video(sb, memory)
+        try:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            LOG.info("Cleaned up job dir %s", job_dir)
+        except Exception:
+            LOG.exception("Could not clean up job dir %s", job_dir)
     except Exception as err:
         LOG.exception("Processing failed for %s", memory.id)
         set_status(sb, memory.id, status="processing_failed", safety_flag=str(err))

@@ -5,9 +5,10 @@ from __future__ import annotations
 import pytest
 
 from echoes.fourdgs.pipeline import (
+    build_benchmark_parser,
+    build_completion_update,
     format_timing_report,
     total_seconds,
-    build_benchmark_parser,
 )
 
 
@@ -42,6 +43,22 @@ class TestFormatTimingReport:
         report = format_timing_report({})
         # Still produces some output (likely a total=0 line)
         assert "total" in report.lower()
+
+
+class TestBuildCompletionUpdate:
+    def test_includes_ready_status_and_splat_path(self):
+        payload = build_completion_update("a/b/manifest.json", duration_seconds=2.5)
+        assert payload["status"] == "ready"
+        assert payload["splat_path"] == "a/b/manifest.json"
+        assert payload["duration_seconds"] == 2.5
+
+    def test_nulls_out_source_video_path(self):
+        payload = build_completion_update("m.json", duration_seconds=0.0)
+        assert payload["source_video_path"] is None
+
+    def test_sets_processing_completed_at_sentinel(self):
+        payload = build_completion_update("m.json", duration_seconds=0.0)
+        assert payload["processing_completed_at"] == "now()"
 
 
 class TestBuildBenchmarkParser:
