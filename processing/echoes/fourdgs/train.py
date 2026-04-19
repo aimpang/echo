@@ -11,13 +11,19 @@ from __future__ import annotations
 
 import logging
 import re
-import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional
 
+from echoes._subprocess import run_logged
+
 LOG = logging.getLogger(__name__)
+
+# Long-running ML jobs — training can genuinely take hours on a busy GPU;
+# the cap just prevents a silently-hung run from pinning the worker forever.
+TRAIN_TIMEOUT_SECONDS = 6 * 60 * 60
+RENDER_TIMEOUT_SECONDS = 60 * 60
 
 
 def build_train_cmd(
@@ -107,7 +113,7 @@ def run_train(
 ) -> None:
     cmd = build_train_cmd(repo_dir, data_dir, model_dir, config_file, extra_args)
     LOG.info("train: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True, cwd=repo_dir)
+    run_logged(cmd, timeout=TRAIN_TIMEOUT_SECONDS, cwd=repo_dir)
 
 
 def run_render(
@@ -118,4 +124,4 @@ def run_render(
 ) -> None:
     cmd = build_render_cmd(repo_dir, model_dir, config_file, extra_args)
     LOG.info("render: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True, cwd=repo_dir)
+    run_logged(cmd, timeout=RENDER_TIMEOUT_SECONDS, cwd=repo_dir)

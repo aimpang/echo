@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from supabase import Client
 
+from echoes._sentry import capture_exception, init_sentry_if_configured
 from echoes.fourdgs.pipeline import (
     build_benchmark_parser,
     build_completion_update,
@@ -76,7 +77,7 @@ def _env(name: str, default: Optional[str] = None, required: bool = False) -> st
     return val or ""
 
 
-AUTO_PASS_SAFETY = os.environ.get("AUTO_PASS_SAFETY", "true").lower() == "true"
+AUTO_PASS_SAFETY = os.environ.get("AUTO_PASS_SAFETY", "false").lower() == "true"
 HIVE_API_KEY = os.environ.get("HIVE_API_KEY")
 WORK_DIR = Path(os.environ.get("WORK_DIR", "./work")).resolve()
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "5"))
@@ -139,13 +140,15 @@ def mark_processing_failed(sb: "Client", memory: Memory, error: BaseException) -
     place), we log and move on rather than bubbling a second exception out
     of the failure handler.
     """
+    capture_exception(error)
     try:
         set_status(sb, memory.id, **build_failure_update(error))
-    except Exception:
+    except Exception as db_err:
         LOG.exception(
             "%s could not write processing_failed to DB — row is stuck",
             job_log_prefix(memory.id, "fail-handler"),
         )
+        capture_exception(db_err)
 
 
 def download_video(sb: "Client", memory: Memory, dest: Path) -> Path:
@@ -496,6 +499,7 @@ def _claim_and_run_once(sb: "Client") -> bool:
 
 def run_worker() -> None:
     WORK_DIR.mkdir(parents=True, exist_ok=True)
+    init_sentry_if_configured()
     _run_preflight_or_die()
     sb = client()
     LOG.info("Echoes worker online. Work dir: %s", WORK_DIR)
@@ -507,8 +511,9 @@ def run_worker() -> None:
         except KeyboardInterrupt:
             LOG.info("Shutdown requested")
             return
-        except Exception:
+        except Exception as loop_err:
             LOG.exception("Worker loop error — sleeping and retrying")
+            capture_exception(loop_err)
             time.sleep(POLL_INTERVAL)
 
 

@@ -37,9 +37,11 @@ echoes/
 Create a Supabase project. In the SQL editor:
 
 ```sql
--- run supabase/migrations/0001_init.sql
+-- run migrations in order:
+--   supabase/migrations/0001_init.sql
 -- then create storage buckets: videos, splats, thumbnails (all private except thumbnails)
--- then run supabase/storage.sql
+--   supabase/migrations/0002_storage_policy.sql
+--   supabase/migrations/0003_storage_policies.sql
 ```
 
 ### 2. Web app

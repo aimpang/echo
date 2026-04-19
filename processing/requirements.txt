@@ -19,5 +19,8 @@ plyfile>=1.0.3
 #   4DGaussians repo (cloned, with diff-gaussian-rasterization + simple-knn extensions built)
 #   COLMAP binary on PATH
 
+# Optional: observability. Worker auto-detects — set SENTRY_DSN to enable.
+sentry-sdk>=2.0.0
+
 # Dev
 pytest>=8.3.0

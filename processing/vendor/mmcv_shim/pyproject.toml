@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mmcv-shim"
+version = "0.1.0"
+description = "Tiny re-export of mmengine.Config under the legacy mmcv name, for 4DGaussians."
+requires-python = ">=3.9"
+dependencies = ["mmengine"]
+
+[tool.setuptools.packages.find]
+include = ["mmcv*"]

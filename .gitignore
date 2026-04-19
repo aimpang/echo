@@ -38,8 +38,10 @@ coverage/
 
 # Python worker
 processing/.venv/
+processing/.venv311/
 processing/work/
-processing/vendor/
+processing/vendor/*
+!processing/vendor/mmcv_shim/
 processing/__pycache__/
 processing/**/__pycache__/
 *.pyc

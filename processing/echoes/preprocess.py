@@ -8,12 +8,18 @@ ffmpeg / colmap and are smoke-tested during pipeline runs.
 from __future__ import annotations
 
 import logging
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Union
 
+from echoes._subprocess import run_logged
+
 LOG = logging.getLogger(__name__)
+
+# Wall-clock caps — a healthy run finishes well below these; they exist to
+# stop a stuck ffmpeg/colmap binary from blocking the whole worker forever.
+FFMPEG_EXTRACT_TIMEOUT_SECONDS = 10 * 60
+COLMAP_STAGE_TIMEOUT_SECONDS = 30 * 60
 
 PathLike = Union[str, Path]
 
@@ -128,7 +134,7 @@ def extract_frames(
     frames_dir.mkdir(parents=True, exist_ok=True)
     cmd = build_ffmpeg_extract_cmd(video_path, frames_dir, fps=fps)
     LOG.info("ffmpeg: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    run_logged(cmd, timeout=FFMPEG_EXTRACT_TIMEOUT_SECONDS)
     frame_count = len(list(frames_dir.glob("frame_*.jpg")))
     return ExtractResult(frames_dir=frames_dir, frame_count=frame_count, fps=fps)
 
@@ -160,7 +166,7 @@ def run_colmap(images_dir: PathLike, workspace: PathLike) -> ColmapResult:
         build_colmap_mapper_cmd(db, images_dir, sparse_root),
     ):
         LOG.info("colmap: %s", " ".join(cmd))
-        subprocess.run(cmd, check=True)
+        run_logged(cmd, timeout=COLMAP_STAGE_TIMEOUT_SECONDS)
 
     # COLMAP mapper outputs models into sparse/0, sparse/1, ... — we take 0.
     sparse0 = sparse_root / "0"
@@ -173,7 +179,7 @@ def run_colmap(images_dir: PathLike, workspace: PathLike) -> ColmapResult:
         sparse_dir=sparse0, images_dir=images_dir, output_dir=dense
     )
     LOG.info("colmap: %s", " ".join(undistort))
-    subprocess.run(undistort, check=True)
+    run_logged(undistort, timeout=COLMAP_STAGE_TIMEOUT_SECONDS)
 
     return ColmapResult(
         workspace=workspace,

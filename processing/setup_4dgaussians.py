@@ -22,19 +22,30 @@ from echoes.fourdgs.preflight import build_4dgaussians_clone_cmd
 DEFAULT_TARGET = Path("vendor/4DGaussians")
 
 POST_CLONE_INSTRUCTIONS = """
-Next steps (run these in your processing venv, with torch+CUDA already installed):
+Next steps (run these in your processing venv):
 
-    cd {target}
-    pip install -r requirements.txt
-    pip install -e submodules/depth-diff-gaussian-rasterization
-    pip install -e submodules/simple-knn
+  1. Install PyTorch with CUDA 12.8 wheels (needed for RTX 5080 sm_120):
+
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+
+  2. Install the patched vendor deps — DO NOT use the upstream requirements.txt,
+     which pins torch==1.13.1 (no wheel for Python 3.11, can't target Blackwell)
+     and mmcv (replaced by the mmengine shim). Use processing/vendor-requirements.txt:
+
+        pip install -r vendor-requirements.txt
+
+  3. Build the CUDA extensions against your installed torch/CUDA:
+
+        cd {target}
+        pip install -e submodules/depth-diff-gaussian-rasterization
+        pip install -e submodules/simple-knn
 
 Then add to processing/.env:
 
     FOURDGS_REPO_DIR={target}
     FOURDGS_CONFIG={target}/arguments/dynerf/default.py
 
-Run the preflight check:
+Verify with a benchmark run (no Supabase required):
 
     python echoes_pipeline.py --benchmark --video samples/clip.mp4 --out work/bench
 """

@@ -122,7 +122,7 @@ a human-readable timing table. Useful for tuning iteration count / fps on the
 Pure logic is unit-tested:
 
 ```powershell
-.\.venv\Scripts\python -m pytest -q
+.\.venv311\Scripts\python -m pytest -q
 ```
 
 Covers: PLY→SPLAT conversion, ffmpeg/COLMAP command builders, dataset staging,
