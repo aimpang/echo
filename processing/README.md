@@ -24,16 +24,23 @@ log on success (and `--benchmark` prints it to stdout + writes
 
 ```powershell
 cd processing
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 
-# PyTorch with CUDA 12.x wheels for RTX 5080 (Blackwell sm_120 — use the
-# latest nightly/stable matching your CUDA toolkit).
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+# Python 3.11 — the ML ecosystem (torch, open3d, mmengine, lpips)
+# doesn't yet ship wheels for 3.14+. Use uv to grab it:
+uv venv --python 3.11 .venv311
+.\.venv311\Scripts\Activate.ps1
+python -m pip install pip wheel setuptools
+
+# PyTorch with CUDA 12.8 wheels for RTX 5080 (Blackwell sm_120).
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 # Core deps
 pip install -r requirements.txt
 ```
+
+You also need the **CUDA Toolkit 12.8** installed system-wide (not just the
+driver) so `nvcc` is on `PATH` — that's what compiles the two CUDA
+extensions below. Download: https://developer.nvidia.com/cuda-12-8-0-download-archive
 
 ### Vendor hustvl/4DGaussians
 
@@ -41,9 +48,15 @@ pip install -r requirements.txt
 # One-shot clone helper (wraps `git clone --recurse-submodules`):
 python setup_4dgaussians.py
 
-# Then build the CUDA extensions against your torch/CUDA install:
+# The vendor's requirements.txt pins torch==1.13.1 which has no wheel for
+# Python 3.11 and can't target Blackwell (sm_120). Skip it — use the
+# patched list at processing/vendor-requirements.txt instead, which
+# omits the torch pins and mmcv (replaced by a pure-Python shim over
+# mmengine — see .venv311/Lib/site-packages/mmcv/__init__.py).
+pip install -r vendor-requirements.txt
+
+# Build the CUDA extensions against your torch/CUDA install:
 cd vendor/4DGaussians
-pip install -r requirements.txt
 pip install -e submodules/depth-diff-gaussian-rasterization
 pip install -e submodules/simple-knn
 cd ../..

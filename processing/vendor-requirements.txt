@@ -1,0 +1,9 @@
+# 4DGaussians runtime deps WITHOUT torch/torchvision (installed separately
+# from the CUDA 12.8 PyTorch index for RTX 5080 Blackwell support) and
+# WITHOUT mmcv (replaced by a pure-Python mmengine shim since mmcv's
+# from-source build fails on modern setuptools).
+lpips
+plyfile
+pytorch_msssim
+open3d
+imageio[ffmpeg]
